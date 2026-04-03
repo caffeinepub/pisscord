@@ -98,7 +98,28 @@ export interface Signal {
     payload: string;
     signalType: string;
 }
+export interface DMCallState {
+    startedAt: Time;
+    participants: Array<Principal>;
+    initiator: Principal;
+    dmChannelId: string;
+}
 export type Time = bigint;
+export interface GroupMessage {
+    id: Id;
+    content: string;
+    isSystem: boolean;
+    author: Principal;
+    groupId: Id;
+    timestamp: Time;
+}
+export interface GroupConversation {
+    id: Id;
+    members: Array<Principal>;
+    name: string;
+    createdBy: Principal;
+    timestamp: Time;
+}
 export type Id = bigint;
 export interface Message {
     id: Id;
@@ -127,25 +148,42 @@ export interface backendInterface {
     _initializeAccessControlWithSecret(userSecret: string): Promise<void>;
     addChannel(serverId: Id, channelName: string): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    createGroupDM(members: Array<Principal>): Promise<Id>;
     createServer(name: string): Promise<Id>;
+    endDMCall(dmChannelId: string): Promise<void>;
     getAllServers(): Promise<Array<Server>>;
+    getAllUsers(): Promise<Array<[Principal, UserProfile]>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getChannelMessages(channel: string): Promise<Array<Message>>;
+    getConversationWith(recipient: Principal): Promise<Array<Message>>;
+    getConversations(): Promise<Array<[Principal, Array<Message>]>>;
+    getDMCallPresence(dmChannelId: string): Promise<Array<Principal>>;
+    getDMCallState(dmChannelId: string): Promise<DMCallState | null>;
+    getGroupDMMessages(groupId: Id): Promise<Array<GroupMessage>>;
+    getMyConversations(): Promise<Array<[Principal, Array<Message>]>>;
+    getMyDMSignals(dmChannelId: string): Promise<Array<Signal>>;
+    getMyGroupDMs(): Promise<Array<GroupConversation>>;
     getMySignals(channelName: string): Promise<Array<Signal>>;
     getServerMembers(serverId: Id): Promise<Array<Principal>>;
     getUserProfile(user: Principal): Promise<UserProfile | null>;
     getUserServers(): Promise<Array<Server>>;
     getVoiceChannelPresence(channelName: string): Promise<Array<Principal>>;
     isCallerAdmin(): Promise<boolean>;
+    joinDMCall(dmChannelId: string): Promise<void>;
     joinServer(serverId: Id): Promise<void>;
     joinVoiceChannel(channelName: string): Promise<void>;
     leaveVoiceChannel(channelName: string): Promise<void>;
+    renameGroupDM(groupId: Id, newName: string): Promise<void>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    sendDM(recipient: Principal, content: string): Promise<void>;
+    sendDMSignal(to: Principal, dmChannelId: string, signalType: string, payload: string): Promise<void>;
+    sendGroupDM(groupId: Id, content: string): Promise<void>;
     sendMessage(channelName: string, content: string): Promise<void>;
     sendSignal(to: Principal, channelName: string, signalType: string, payload: string): Promise<void>;
+    startDMCall(dmChannelId: string, members: Array<Principal>): Promise<void>;
 }
-import type { UserProfile as _UserProfile, UserRole as _UserRole } from "./declarations/backend.did.d.ts";
+import type { DMCallState as _DMCallState, UserProfile as _UserProfile, UserRole as _UserRole } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
     async _initializeAccessControlWithSecret(arg0: string): Promise<void> {
@@ -190,6 +228,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async createGroupDM(arg0: Array<Principal>): Promise<Id> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.createGroupDM(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.createGroupDM(arg0);
+            return result;
+        }
+    }
     async createServer(arg0: string): Promise<Id> {
         if (this.processError) {
             try {
@@ -204,6 +256,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async endDMCall(arg0: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.endDMCall(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.endDMCall(arg0);
+            return result;
+        }
+    }
     async getAllServers(): Promise<Array<Server>> {
         if (this.processError) {
             try {
@@ -215,6 +281,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.getAllServers();
+            return result;
+        }
+    }
+    async getAllUsers(): Promise<Array<[Principal, UserProfile]>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getAllUsers();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getAllUsers();
             return result;
         }
     }
@@ -257,6 +337,118 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.getChannelMessages(arg0);
+            return result;
+        }
+    }
+    async getConversationWith(arg0: Principal): Promise<Array<Message>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getConversationWith(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getConversationWith(arg0);
+            return result;
+        }
+    }
+    async getConversations(): Promise<Array<[Principal, Array<Message>]>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getConversations();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getConversations();
+            return result;
+        }
+    }
+    async getDMCallPresence(arg0: string): Promise<Array<Principal>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getDMCallPresence(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getDMCallPresence(arg0);
+            return result;
+        }
+    }
+    async getDMCallState(arg0: string): Promise<DMCallState | null> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getDMCallState(arg0);
+                return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getDMCallState(arg0);
+            return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
+        }
+    }
+    async getGroupDMMessages(arg0: Id): Promise<Array<GroupMessage>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getGroupDMMessages(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getGroupDMMessages(arg0);
+            return result;
+        }
+    }
+    async getMyConversations(): Promise<Array<[Principal, Array<Message>]>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getMyConversations();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getMyConversations();
+            return result;
+        }
+    }
+    async getMyDMSignals(arg0: string): Promise<Array<Signal>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getMyDMSignals(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getMyDMSignals(arg0);
+            return result;
+        }
+    }
+    async getMyGroupDMs(): Promise<Array<GroupConversation>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getMyGroupDMs();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getMyGroupDMs();
             return result;
         }
     }
@@ -344,6 +536,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async joinDMCall(arg0: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.joinDMCall(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.joinDMCall(arg0);
+            return result;
+        }
+    }
     async joinServer(arg0: Id): Promise<void> {
         if (this.processError) {
             try {
@@ -386,6 +592,20 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async renameGroupDM(arg0: Id, arg1: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.renameGroupDM(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.renameGroupDM(arg0, arg1);
+            return result;
+        }
+    }
     async saveCallerUserProfile(arg0: UserProfile): Promise<void> {
         if (this.processError) {
             try {
@@ -397,6 +617,48 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.saveCallerUserProfile(arg0);
+            return result;
+        }
+    }
+    async sendDM(arg0: Principal, arg1: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.sendDM(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.sendDM(arg0, arg1);
+            return result;
+        }
+    }
+    async sendDMSignal(arg0: Principal, arg1: string, arg2: string, arg3: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.sendDMSignal(arg0, arg1, arg2, arg3);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.sendDMSignal(arg0, arg1, arg2, arg3);
+            return result;
+        }
+    }
+    async sendGroupDM(arg0: Id, arg1: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.sendGroupDM(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.sendGroupDM(arg0, arg1);
             return result;
         }
     }
@@ -428,11 +690,28 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async startDMCall(arg0: string, arg1: Array<Principal>): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.startDMCall(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.startDMCall(arg0, arg1);
+            return result;
+        }
+    }
 }
 function from_candid_UserRole_n4(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _UserRole): UserRole {
     return from_candid_variant_n5(_uploadFile, _downloadFile, value);
 }
 function from_candid_opt_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_UserProfile]): UserProfile | null {
+    return value.length === 0 ? null : value[0];
+}
+function from_candid_opt_n6(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_DMCallState]): DMCallState | null {
     return value.length === 0 ? null : value[0];
 }
 function from_candid_variant_n5(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {

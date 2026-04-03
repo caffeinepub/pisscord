@@ -14,6 +14,14 @@ import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import { useAddChannel } from "../hooks/useQueries";
 import AudioSettingsModal from "./AudioSettingsModal";
 
+function getProfilePhoto(principalStr: string): string | null {
+  try {
+    return localStorage.getItem(`profilePhoto_${principalStr}`);
+  } catch {
+    return null;
+  }
+}
+
 interface Props {
   server: Server | null;
   activeChannel: string | null;
@@ -277,20 +285,29 @@ export default function ChannelSidebar({
             const name =
               memberNames[principal] || `${principal.slice(0, 8)}...`;
             const isMe = principal === myPrincipal;
+            const photo = getProfilePhoto(principal);
             return (
               <div
                 key={principal}
                 data-ocid={`member.item.${idx + 1}`}
                 className="flex items-center gap-2 px-2 py-1 rounded hover:bg-dc-channelhover transition-colors"
               >
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                  style={{
-                    backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
-                  }}
-                >
-                  {name.charAt(0).toUpperCase()}
-                </div>
+                {photo ? (
+                  <img
+                    src={photo}
+                    alt={name}
+                    className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+                  />
+                ) : (
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                    style={{
+                      backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
+                    }}
+                  >
+                    {name.charAt(0).toUpperCase()}
+                  </div>
+                )}
                 <span className="text-sm text-dc-secondary truncate">
                   {name}
                   {isMe ? " (you)" : ""}
@@ -324,12 +341,24 @@ export default function ChannelSidebar({
 
       {/* User panel */}
       <div className="h-14 px-2 flex items-center gap-2 bg-dc-serverbar">
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-          style={{ backgroundColor: "oklch(0.55 0.22 264)" }}
-        >
-          {(memberNames[myPrincipal || ""] || "?").charAt(0).toUpperCase()}
-        </div>
+        {(() => {
+          const myPhoto = myPrincipal ? getProfilePhoto(myPrincipal) : null;
+          const myName = memberNames[myPrincipal || ""] || "?";
+          return myPhoto ? (
+            <img
+              src={myPhoto}
+              alt={myName}
+              className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+            />
+          ) : (
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+              style={{ backgroundColor: "oklch(0.55 0.22 264)" }}
+            >
+              {myName.charAt(0).toUpperCase()}
+            </div>
+          );
+        })()}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-dc-primary truncate">
             {memberNames[myPrincipal || ""] || "Unknown"}

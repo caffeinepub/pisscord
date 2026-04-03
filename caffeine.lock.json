@@ -9,7 +9,8 @@
     "build-template-react": "1.1.0",
     "initial-app": "1.0.0",
     "github-export-icp-cli": "1.0.1",
-    "authorization": "4.0.1"
+    "authorization": "4.0.1",
+    "blob-storage": "4.0.0"
   },
   "tags": [],
   "aiCoreVersion": "0.dev"

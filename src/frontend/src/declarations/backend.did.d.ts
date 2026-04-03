@@ -10,6 +10,27 @@ import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 import type { Principal } from '@icp-sdk/core/principal';
 
+export interface DMCallState {
+  'startedAt' : Time,
+  'participants' : Array<Principal>,
+  'initiator' : Principal,
+  'dmChannelId' : string,
+}
+export interface GroupConversation {
+  'id' : Id,
+  'members' : Array<Principal>,
+  'name' : string,
+  'createdBy' : Principal,
+  'timestamp' : Time,
+}
+export interface GroupMessage {
+  'id' : Id,
+  'content' : string,
+  'isSystem' : boolean,
+  'author' : Principal,
+  'groupId' : Id,
+  'timestamp' : Time,
+}
 export type Id = bigint;
 export interface Message {
   'id' : Id,
@@ -44,23 +65,40 @@ export interface _SERVICE {
   '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
   'addChannel' : ActorMethod<[Id, string], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'createGroupDM' : ActorMethod<[Array<Principal>], Id>,
   'createServer' : ActorMethod<[string], Id>,
+  'endDMCall' : ActorMethod<[string], undefined>,
   'getAllServers' : ActorMethod<[], Array<Server>>,
+  'getAllUsers' : ActorMethod<[], Array<[Principal, UserProfile]>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getChannelMessages' : ActorMethod<[string], Array<Message>>,
+  'getConversationWith' : ActorMethod<[Principal], Array<Message>>,
+  'getConversations' : ActorMethod<[], Array<[Principal, Array<Message>]>>,
+  'getDMCallPresence' : ActorMethod<[string], Array<Principal>>,
+  'getDMCallState' : ActorMethod<[string], [] | [DMCallState]>,
+  'getGroupDMMessages' : ActorMethod<[Id], Array<GroupMessage>>,
+  'getMyConversations' : ActorMethod<[], Array<[Principal, Array<Message>]>>,
+  'getMyDMSignals' : ActorMethod<[string], Array<Signal>>,
+  'getMyGroupDMs' : ActorMethod<[], Array<GroupConversation>>,
   'getMySignals' : ActorMethod<[string], Array<Signal>>,
   'getServerMembers' : ActorMethod<[Id], Array<Principal>>,
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'getUserServers' : ActorMethod<[], Array<Server>>,
   'getVoiceChannelPresence' : ActorMethod<[string], Array<Principal>>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
+  'joinDMCall' : ActorMethod<[string], undefined>,
   'joinServer' : ActorMethod<[Id], undefined>,
   'joinVoiceChannel' : ActorMethod<[string], undefined>,
   'leaveVoiceChannel' : ActorMethod<[string], undefined>,
+  'renameGroupDM' : ActorMethod<[Id, string], undefined>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'sendDM' : ActorMethod<[Principal, string], undefined>,
+  'sendDMSignal' : ActorMethod<[Principal, string, string, string], undefined>,
+  'sendGroupDM' : ActorMethod<[Id, string], undefined>,
   'sendMessage' : ActorMethod<[string, string], undefined>,
   'sendSignal' : ActorMethod<[Principal, string, string, string], undefined>,
+  'startDMCall' : ActorMethod<[string, Array<Principal>], undefined>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

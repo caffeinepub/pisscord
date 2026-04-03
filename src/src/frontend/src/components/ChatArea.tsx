@@ -28,6 +28,14 @@ function getUserColor(principal: string) {
   return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
 }
 
+function getProfilePhoto(principalStr: string): string | null {
+  try {
+    return localStorage.getItem(`profilePhoto_${principalStr}`);
+  } catch {
+    return null;
+  }
+}
+
 interface Props {
   channel: string | null;
   memberNames: Record<string, string>;
@@ -161,6 +169,7 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
             prevMsg &&
             prevMsg.author.toString() === authorPrincipal &&
             Number(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1_000_000_000;
+          const photo = getProfilePhoto(authorPrincipal);
 
           return (
             <div
@@ -169,12 +178,20 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
               className={`flex items-start gap-4 px-2 py-0.5 rounded hover:bg-dc-hover group transition-colors ${isContinuation ? "mt-0" : "mt-4"}`}
             >
               {!isContinuation ? (
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 mt-0.5"
-                  style={{ backgroundColor: getUserColor(authorPrincipal) }}
-                >
-                  {authorName.charAt(0).toUpperCase()}
-                </div>
+                photo ? (
+                  <img
+                    src={photo}
+                    alt={authorName}
+                    className="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-0.5"
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 mt-0.5"
+                    style={{ backgroundColor: getUserColor(authorPrincipal) }}
+                  >
+                    {authorName.charAt(0).toUpperCase()}
+                  </div>
+                )
               ) : (
                 <div className="w-10 flex-shrink-0" />
               )}

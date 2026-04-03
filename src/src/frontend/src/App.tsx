@@ -18,6 +18,14 @@ import {
   useUserServers,
 } from "./hooks/useQueries";
 
+function getProfilePhoto(principalStr: string): string | null {
+  try {
+    return localStorage.getItem(`profilePhoto_${principalStr}`);
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const { identity, login, isInitializing, isLoggingIn } =
     useInternetIdentity();
@@ -267,20 +275,29 @@ export default function App() {
                 const name =
                   enrichedNames[principal] || `${principal.slice(0, 8)}...`;
                 const isMe = principal === myPrincipal;
+                const photo = getProfilePhoto(principal);
                 return (
                   <div
                     key={principal}
                     data-ocid={`member.item.${idx + 1}`}
                     className="flex items-center gap-3 py-2 px-2 rounded hover:bg-dc-channelhover transition-colors"
                   >
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                      style={{
-                        backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
-                      }}
-                    >
-                      {name.charAt(0).toUpperCase()}
-                    </div>
+                    {photo ? (
+                      <img
+                        src={photo}
+                        alt={name}
+                        className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+                      />
+                    ) : (
+                      <div
+                        className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                        style={{
+                          backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
+                        }}
+                      >
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <span className="text-sm text-dc-secondary">
                       {name}
                       {isMe ? " (you)" : ""}

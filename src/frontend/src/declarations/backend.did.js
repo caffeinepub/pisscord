@@ -31,6 +31,20 @@ export const Message = IDL.Record({
   'timestamp' : Time,
   'channel' : IDL.Text,
 });
+export const DMCallState = IDL.Record({
+  'startedAt' : Time,
+  'participants' : IDL.Vec(IDL.Principal),
+  'initiator' : IDL.Principal,
+  'dmChannelId' : IDL.Text,
+});
+export const GroupMessage = IDL.Record({
+  'id' : Id,
+  'content' : IDL.Text,
+  'isSystem' : IDL.Bool,
+  'author' : IDL.Principal,
+  'groupId' : Id,
+  'timestamp' : Time,
+});
 export const Signal = IDL.Record({
   'id' : Id,
   'to' : IDL.Principal,
@@ -40,17 +54,55 @@ export const Signal = IDL.Record({
   'payload' : IDL.Text,
   'signalType' : IDL.Text,
 });
+export const GroupConversation = IDL.Record({
+  'id' : Id,
+  'members' : IDL.Vec(IDL.Principal),
+  'name' : IDL.Text,
+  'createdBy' : IDL.Principal,
+  'timestamp' : Time,
+});
 
 export const idlService = IDL.Service({
   '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
   'addChannel' : IDL.Func([Id, IDL.Text], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+  'createGroupDM' : IDL.Func([IDL.Vec(IDL.Principal)], [Id], []),
   'createServer' : IDL.Func([IDL.Text], [Id], []),
+  'endDMCall' : IDL.Func([IDL.Text], [], []),
   'getAllServers' : IDL.Func([], [IDL.Vec(Server)], ['query']),
+  'getAllUsers' : IDL.Func(
+      [],
+      [IDL.Vec(IDL.Tuple(IDL.Principal, UserProfile))],
+      ['query'],
+    ),
   'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getChannelMessages' : IDL.Func([IDL.Text], [IDL.Vec(Message)], ['query']),
-  'getMySignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], []),
+  'getConversationWith' : IDL.Func(
+      [IDL.Principal],
+      [IDL.Vec(Message)],
+      ['query'],
+    ),
+  'getConversations' : IDL.Func(
+      [],
+      [IDL.Vec(IDL.Tuple(IDL.Principal, IDL.Vec(Message)))],
+      ['query'],
+    ),
+  'getDMCallPresence' : IDL.Func(
+      [IDL.Text],
+      [IDL.Vec(IDL.Principal)],
+      ['query'],
+    ),
+  'getDMCallState' : IDL.Func([IDL.Text], [IDL.Opt(DMCallState)], ['query']),
+  'getGroupDMMessages' : IDL.Func([Id], [IDL.Vec(GroupMessage)], ['query']),
+  'getMyConversations' : IDL.Func(
+      [],
+      [IDL.Vec(IDL.Tuple(IDL.Principal, IDL.Vec(Message)))],
+      ['query'],
+    ),
+  'getMyDMSignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], ['query']),
+  'getMyGroupDMs' : IDL.Func([], [IDL.Vec(GroupConversation)], ['query']),
+  'getMySignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], ['query']),
   'getServerMembers' : IDL.Func([Id], [IDL.Vec(IDL.Principal)], ['query']),
   'getUserProfile' : IDL.Func(
       [IDL.Principal],
@@ -64,16 +116,26 @@ export const idlService = IDL.Service({
       ['query'],
     ),
   'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
+  'joinDMCall' : IDL.Func([IDL.Text], [], []),
   'joinServer' : IDL.Func([Id], [], []),
   'joinVoiceChannel' : IDL.Func([IDL.Text], [], []),
   'leaveVoiceChannel' : IDL.Func([IDL.Text], [], []),
+  'renameGroupDM' : IDL.Func([Id, IDL.Text], [], []),
   'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'sendDM' : IDL.Func([IDL.Principal, IDL.Text], [], []),
+  'sendDMSignal' : IDL.Func(
+      [IDL.Principal, IDL.Text, IDL.Text, IDL.Text],
+      [],
+      [],
+    ),
+  'sendGroupDM' : IDL.Func([Id, IDL.Text], [], []),
   'sendMessage' : IDL.Func([IDL.Text, IDL.Text], [], []),
   'sendSignal' : IDL.Func(
       [IDL.Principal, IDL.Text, IDL.Text, IDL.Text],
       [],
       [],
     ),
+  'startDMCall' : IDL.Func([IDL.Text, IDL.Vec(IDL.Principal)], [], []),
 });
 
 export const idlInitArgs = [];
@@ -102,6 +164,20 @@ export const idlFactory = ({ IDL }) => {
     'timestamp' : Time,
     'channel' : IDL.Text,
   });
+  const DMCallState = IDL.Record({
+    'startedAt' : Time,
+    'participants' : IDL.Vec(IDL.Principal),
+    'initiator' : IDL.Principal,
+    'dmChannelId' : IDL.Text,
+  });
+  const GroupMessage = IDL.Record({
+    'id' : Id,
+    'content' : IDL.Text,
+    'isSystem' : IDL.Bool,
+    'author' : IDL.Principal,
+    'groupId' : Id,
+    'timestamp' : Time,
+  });
   const Signal = IDL.Record({
     'id' : Id,
     'to' : IDL.Principal,
@@ -111,17 +187,55 @@ export const idlFactory = ({ IDL }) => {
     'payload' : IDL.Text,
     'signalType' : IDL.Text,
   });
+  const GroupConversation = IDL.Record({
+    'id' : Id,
+    'members' : IDL.Vec(IDL.Principal),
+    'name' : IDL.Text,
+    'createdBy' : IDL.Principal,
+    'timestamp' : Time,
+  });
   
   return IDL.Service({
     '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
     'addChannel' : IDL.Func([Id, IDL.Text], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+    'createGroupDM' : IDL.Func([IDL.Vec(IDL.Principal)], [Id], []),
     'createServer' : IDL.Func([IDL.Text], [Id], []),
+    'endDMCall' : IDL.Func([IDL.Text], [], []),
     'getAllServers' : IDL.Func([], [IDL.Vec(Server)], ['query']),
+    'getAllUsers' : IDL.Func(
+        [],
+        [IDL.Vec(IDL.Tuple(IDL.Principal, UserProfile))],
+        ['query'],
+      ),
     'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getChannelMessages' : IDL.Func([IDL.Text], [IDL.Vec(Message)], ['query']),
-    'getMySignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], []),
+    'getConversationWith' : IDL.Func(
+        [IDL.Principal],
+        [IDL.Vec(Message)],
+        ['query'],
+      ),
+    'getConversations' : IDL.Func(
+        [],
+        [IDL.Vec(IDL.Tuple(IDL.Principal, IDL.Vec(Message)))],
+        ['query'],
+      ),
+    'getDMCallPresence' : IDL.Func(
+        [IDL.Text],
+        [IDL.Vec(IDL.Principal)],
+        ['query'],
+      ),
+    'getDMCallState' : IDL.Func([IDL.Text], [IDL.Opt(DMCallState)], ['query']),
+    'getGroupDMMessages' : IDL.Func([Id], [IDL.Vec(GroupMessage)], ['query']),
+    'getMyConversations' : IDL.Func(
+        [],
+        [IDL.Vec(IDL.Tuple(IDL.Principal, IDL.Vec(Message)))],
+        ['query'],
+      ),
+    'getMyDMSignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], ['query']),
+    'getMyGroupDMs' : IDL.Func([], [IDL.Vec(GroupConversation)], ['query']),
+    'getMySignals' : IDL.Func([IDL.Text], [IDL.Vec(Signal)], ['query']),
     'getServerMembers' : IDL.Func([Id], [IDL.Vec(IDL.Principal)], ['query']),
     'getUserProfile' : IDL.Func(
         [IDL.Principal],
@@ -135,16 +249,26 @@ export const idlFactory = ({ IDL }) => {
         ['query'],
       ),
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
+    'joinDMCall' : IDL.Func([IDL.Text], [], []),
     'joinServer' : IDL.Func([Id], [], []),
     'joinVoiceChannel' : IDL.Func([IDL.Text], [], []),
     'leaveVoiceChannel' : IDL.Func([IDL.Text], [], []),
+    'renameGroupDM' : IDL.Func([Id, IDL.Text], [], []),
     'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'sendDM' : IDL.Func([IDL.Principal, IDL.Text], [], []),
+    'sendDMSignal' : IDL.Func(
+        [IDL.Principal, IDL.Text, IDL.Text, IDL.Text],
+        [],
+        [],
+      ),
+    'sendGroupDM' : IDL.Func([Id, IDL.Text], [], []),
     'sendMessage' : IDL.Func([IDL.Text, IDL.Text], [], []),
     'sendSignal' : IDL.Func(
         [IDL.Principal, IDL.Text, IDL.Text, IDL.Text],
         [],
         [],
       ),
+    'startDMCall' : IDL.Func([IDL.Text, IDL.Vec(IDL.Principal)], [], []),
   });
 };
 

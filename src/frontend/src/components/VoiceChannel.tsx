@@ -6,10 +6,12 @@ import {
   RefreshCw,
   Settings,
   Volume2,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActor } from "../hooks/useActor";
 import { useAudioSettings } from "../hooks/useAudioSettings";
+import { useProfilePhoto, useProfilePhotos } from "../hooks/useProfilePhoto";
 import {
   useGetMySignals,
   useJoinVoiceChannel,
@@ -17,25 +19,17 @@ import {
   useVoiceChannelPresence,
 } from "../hooks/useQueries";
 import SettingsModal from "./SettingsModal";
+import UserAvatar from "./UserAvatar";
 
-// Using Open Relay Project (free public TURN server) as relay fallback
-// This handles users behind restrictive NAT/firewalls where STUN alone fails
+// STUN servers for ICE candidate gathering (direct P2P connection)
+// TURN was removed — Open Relay Project credentials are no longer valid
+// and direct P2P via STUN has proven reliable in testing
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
   { urls: "stun:stun3.l.google.com:19302" },
   { urls: "stun:stun4.l.google.com:19302" },
-  {
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turn:openrelay.metered.ca:80?transport=tcp",
-      "turn:openrelay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
 ];
 
 // Wait for ICE gathering to complete — up to 8 seconds
@@ -112,10 +106,18 @@ export default function VoiceChannel({
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, string>>({});
+  const [speakingStates, setSpeakingStates] = useState<Record<string, boolean>>(
+    {},
+  );
   const [showDiag, setShowDiag] = useState(false);
   const [diagInfo, setDiagInfo] = useState<string>("");
 
+  // Per-user volume state
+  const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
+  const [volumePopoverFor, setVolumePopoverFor] = useState<string | null>(null);
+
   const { settings } = useAudioSettings();
+  const { photoUrl } = useProfilePhoto(actor, myPrincipal);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const [showSettings, setShowSettings] = useState(false);
@@ -124,8 +126,17 @@ export default function VoiceChannel({
   const peersRef = useRef<Map<string, PeerState>>(new Map());
   const remoteAudioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
   const processedSignalIds = useRef<Set<string>>(new Set());
+  const peerMissCountRef = useRef<Map<string, number>>(new Map());
   const channelRef = useRef(channelName);
   channelRef.current = channelName;
+
+  // Speaking detection refs
+  const localAnalyserRef = useRef<AnalyserNode | null>(null);
+  const remoteAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const speakingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
 
   const isJoinedRef = useRef(false);
   const handleLeaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -160,12 +171,24 @@ export default function VoiceChannel({
       audio.srcObject = null;
       remoteAudioRefs.current.delete(remotePrincipal);
     }
+    remoteAnalysersRef.current.delete(remotePrincipal);
     setPeerStates((prev) => {
       const next = { ...prev };
       delete next[remotePrincipal];
       return next;
     });
   }, []);
+
+  // Apply saved volume to an audio element
+  const applySavedVolume = useCallback(
+    (principal: string, audio: HTMLAudioElement) => {
+      const saved = localStorage.getItem(`userVolume_${principal}`);
+      if (saved !== null) {
+        audio.volume = Math.min(3, Math.max(0, Number(saved) / 100));
+      }
+    },
+    [],
+  );
 
   const createPeerConnection = useCallback(
     (remotePrincipal: string): PeerState => {
@@ -188,10 +211,24 @@ export default function VoiceChannel({
         if (!audio) {
           audio = new Audio();
           audio.autoplay = true;
+          applySavedVolume(remotePrincipal, audio);
           remoteAudioRefs.current.set(remotePrincipal, audio);
         }
         audio.srcObject = event.streams[0];
         audio.play().catch(() => {});
+
+        // Set up speaking analyser for remote stream
+        try {
+          const ctx = audioContextRef.current ?? new AudioContext();
+          if (!audioContextRef.current) audioContextRef.current = ctx;
+          const source = ctx.createMediaStreamSource(event.streams[0]);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          remoteAnalysersRef.current.set(remotePrincipal, analyser);
+        } catch (e) {
+          console.warn("Could not create remote analyser", e);
+        }
       };
 
       pc.onconnectionstatechange = () => {
@@ -211,7 +248,7 @@ export default function VoiceChannel({
       updatePeerStateDisplay(remotePrincipal, "new");
       return peerState;
     },
-    [closePeer, updatePeerStateDisplay],
+    [closePeer, updatePeerStateDisplay, applySavedVolume],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: actor handled via ref
@@ -247,6 +284,7 @@ export default function VoiceChannel({
               );
             }
 
+            // CRITICAL: use sig.from directly — it is a real Principal from the backend
             await actorRef.current!.sendSignal(
               sig.from,
               channelRef.current,
@@ -314,6 +352,7 @@ export default function VoiceChannel({
               );
             }
 
+            // CRITICAL: pass `p` directly — it is a real ICP Principal from the presence array
             await actorRef.current!.sendSignal(
               p,
               channelRef.current,
@@ -337,7 +376,16 @@ export default function VoiceChannel({
       const presenceSet = new Set(presence.map((p) => p.toString()));
       for (const [principal] of peersRef.current) {
         if (!presenceSet.has(principal)) {
-          closePeer(principal);
+          // Bug 4 fix: require 3 consecutive misses before closing peer
+          const misses = (peerMissCountRef.current.get(principal) ?? 0) + 1;
+          peerMissCountRef.current.set(principal, misses);
+          if (misses >= 3) {
+            peerMissCountRef.current.delete(principal);
+            closePeer(principal);
+          }
+        } else {
+          // Reset miss count when peer is confirmed in presence
+          peerMissCountRef.current.delete(principal);
         }
       }
     };
@@ -373,6 +421,9 @@ export default function VoiceChannel({
       audio.srcObject = null;
     }
     remoteAudioRefs.current.clear();
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+    }
     processedSignalIds.current.clear();
     setPeerStates({});
 
@@ -393,6 +444,38 @@ export default function VoiceChannel({
     };
   }, []);
 
+  // Speaking detection polling
+  useEffect(() => {
+    const buf = new Uint8Array(128);
+    speakingIntervalRef.current = setInterval(() => {
+      const updates: Record<string, boolean> = {};
+
+      // Local speaking
+      if (localAnalyserRef.current && myPrincipal) {
+        localAnalyserRef.current.getByteFrequencyData(buf);
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+        updates[myPrincipal] = avg > 10;
+      }
+
+      // Remote speaking
+      for (const [p, analyser] of remoteAnalysersRef.current) {
+        analyser.getByteFrequencyData(buf);
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+        updates[p] = avg > 10;
+      }
+
+      setSpeakingStates((prev) => {
+        const changed = Object.entries(updates).some(([k, v]) => prev[k] !== v);
+        return changed ? { ...prev, ...updates } : prev;
+      });
+    }, 100);
+
+    return () => {
+      if (speakingIntervalRef.current)
+        clearInterval(speakingIntervalRef.current);
+    };
+  }, [myPrincipal]);
+
   const handleJoin = async () => {
     if (!actor) return;
     setIsJoining(true);
@@ -409,6 +492,20 @@ export default function VoiceChannel({
         },
       });
       localStreamRef.current = stream;
+
+      // Set up speaking detection for local stream
+      try {
+        const ctx = new AudioContext();
+        audioContextRef.current = ctx;
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        localAnalyserRef.current = analyser;
+      } catch (e) {
+        console.warn("Could not create local analyser", e);
+      }
+
       setIsJoined(true);
       isJoinedRef.current = true;
       onJoinedChange(channelName);
@@ -445,7 +542,42 @@ export default function VoiceChannel({
     }
   };
 
+  // Handle volume slider change
+  const handleVolumeChange = (principal: string, value: number) => {
+    setUserVolumes((prev) => ({ ...prev, [principal]: value }));
+    localStorage.setItem(`userVolume_${principal}`, String(value));
+    const audio = remoteAudioRefs.current.get(principal);
+    if (audio) {
+      audio.volume = Math.min(3, Math.max(0, value / 100));
+    }
+  };
+
+  // Close volume popover when clicking outside
+  const handleTileClick = (principal: string) => {
+    if (principal === myPrincipal) return;
+    setVolumePopoverFor((prev) => (prev === principal ? null : principal));
+  };
+
+  // Load initial volume state from localStorage
+  useEffect(() => {
+    const saved: Record<string, number> = {};
+    for (const [, p] of presence.entries()) {
+      const pStr = p.toString();
+      const vol = localStorage.getItem(`userVolume_${pStr}`);
+      if (vol !== null) saved[pStr] = Number(vol);
+    }
+    if (Object.keys(saved).length > 0) {
+      setUserVolumes((prev) => ({ ...saved, ...prev }));
+    }
+  }, [presence]);
+
   const presencePrincipals = presence.map((p) => p.toString());
+
+  // Async profile photos for all voice channel participants
+  const otherPresencePrincipals = presencePrincipals.filter(
+    (p) => p !== myPrincipal,
+  );
+  const memberPhotos = useProfilePhotos(otherPresencePrincipals, actor);
 
   function stateLabel(principal: string): { label: string; color: string } {
     if (principal === myPrincipal)
@@ -473,13 +605,31 @@ export default function VoiceChannel({
     }
   }
 
-  const anyConnected = Object.values(peerStates).some((s) => s === "connected");
+  const hasPeers = Object.keys(peerStates).length > 0;
+  const anyConnected =
+    !hasPeers || Object.values(peerStates).some((s) => s === "connected");
   const anyFailed = Object.values(peerStates).some(
     (s) => s === "failed" || s === "closed",
   );
 
   return (
-    <div className="flex-1 flex flex-col bg-dc-chat min-w-0">
+    <div
+      className="flex-1 flex flex-col bg-dc-chat min-w-0"
+      // Close volume popover on outside click
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (
+          !target.closest("[data-volume-popover]") &&
+          !target.closest("[data-volume-tile]")
+        ) {
+          setVolumePopoverFor(null);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setVolumePopoverFor(null);
+      }}
+      role="presentation"
+    >
       <div className="h-12 px-4 flex items-center gap-3 border-b border-dc-serverbar shadow-sm flex-shrink-0">
         <Volume2 size={20} className="text-dc-secondary" />
         <span className="font-semibold text-dc-primary">{displayName}</span>
@@ -535,19 +685,56 @@ export default function VoiceChannel({
                 const isMe = principal === myPrincipal;
                 const avatarColor = getAvatarColor(principal);
                 const { label, color } = stateLabel(principal);
+                const isSpeaking = speakingStates[principal] ?? false;
+                const showVolume = !isMe && volumePopoverFor === principal;
+                const currentVolume = userVolumes[principal] ?? 100;
+                // Get this user's profile photo
+                const userPhoto = isMe
+                  ? photoUrl
+                  : (memberPhotos[principal] ?? null);
 
                 return (
                   <div
                     key={principal}
-                    className="flex flex-col items-center gap-2"
+                    className="flex flex-col items-center gap-2 relative"
                   >
-                    <div className="relative">
-                      <div
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg"
-                        style={{ backgroundColor: avatarColor }}
-                      >
-                        {name.charAt(0).toUpperCase()}
-                      </div>
+                    <div
+                      className={`relative ${
+                        !isMe ? "cursor-pointer select-none" : ""
+                      }`}
+                      data-volume-tile={!isMe ? principal : undefined}
+                      onClick={() => handleTileClick(principal)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ")
+                          handleTileClick(principal);
+                      }}
+                      role={!isMe ? "button" : undefined}
+                      tabIndex={!isMe ? 0 : undefined}
+                    >
+                      {userPhoto ? (
+                        <img
+                          src={userPhoto}
+                          alt={name}
+                          className="w-16 h-16 rounded-full object-cover shadow-lg"
+                          style={{
+                            boxShadow: isSpeaking
+                              ? "0 0 0 3px #3ba55d, 0 0 12px 4px rgba(59,165,93,0.5)"
+                              : undefined,
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg"
+                          style={{
+                            backgroundColor: avatarColor,
+                            boxShadow: isSpeaking
+                              ? "0 0 0 3px #3ba55d, 0 0 12px 4px rgba(59,165,93,0.5)"
+                              : undefined,
+                          }}
+                        >
+                          {name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
                       <span
                         className={`absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 border-dc-chat ${
                           peerStates[principal] === "connected" || isMe
@@ -565,6 +752,57 @@ export default function VoiceChannel({
                       >
                         {label}
                       </span>
+                    )}
+
+                    {/* Volume popover */}
+                    {showVolume && (
+                      <div
+                        data-volume-popover="true"
+                        className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 w-52 bg-dc-sidebar border border-dc-serverbar rounded-lg shadow-2xl p-3"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        role="presentation"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold text-dc-primary truncate max-w-[120px]">
+                            {name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setVolumePopoverFor(null)}
+                            className="text-dc-muted hover:text-dc-primary transition-colors ml-2 flex-shrink-0"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Volume2
+                            size={12}
+                            className="text-dc-muted flex-shrink-0"
+                          />
+                          <input
+                            data-ocid="voice.volume.input"
+                            type="range"
+                            min="0"
+                            max="300"
+                            step="1"
+                            value={currentVolume}
+                            onChange={(e) =>
+                              handleVolumeChange(
+                                principal,
+                                Number(e.target.value),
+                              )
+                            }
+                            className="flex-1 h-1.5 appearance-none rounded-full bg-dc-serverbar accent-dc-blurple cursor-pointer"
+                          />
+                          <span className="text-xs font-mono text-dc-secondary w-10 text-right flex-shrink-0">
+                            {currentVolume}%
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-dc-muted mt-1.5">
+                          Click avatar to adjust volume
+                        </p>
+                      </div>
                     )}
                   </div>
                 );
@@ -698,6 +936,8 @@ export default function VoiceChannel({
         open={showSettings}
         onClose={() => setShowSettings(false)}
         showBitrate={isOwner}
+        myPrincipal={myPrincipal}
+        myName={memberNames[myPrincipal || ""] || "?"}
       />
     </div>
   );

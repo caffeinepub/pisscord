@@ -13,16 +13,66 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useRef } from "react";
+import { useActor } from "../hooks/useActor";
 import { useAudioSettings } from "../hooks/useAudioSettings";
+import { useProfilePhoto } from "../hooks/useProfilePhoto";
+import UserAvatar from "./UserAvatar";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   showBitrate: boolean;
+  myPrincipal?: string | null;
+  myName?: string;
 }
 
-export default function SettingsModal({ open, onClose, showBitrate }: Props) {
+export default function SettingsModal({
+  open,
+  onClose,
+  showBitrate,
+  myPrincipal,
+  myName,
+}: Props) {
   const { settings, update } = useAudioSettings();
+  const { actor } = useActor();
+  const { photoUrl, savePhoto, clearPhoto } = useProfilePhoto(
+    actor,
+    myPrincipal,
+  );
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext("2d")!;
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width - min) / 2;
+        const sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, 128, 128);
+        // Save to backend (actor is available via hook)
+        savePhoto(
+          canvas.toDataURL("image/jpeg", 0.85),
+          myPrincipal ?? undefined,
+        );
+      };
+      img.src = ev.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    // Reset file input so same file can be re-selected
+    e.target.value = "";
+  };
+
+  const principal = myPrincipal || "";
+  const name = myName || "U";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -35,6 +85,52 @@ export default function SettingsModal({ open, onClose, showBitrate }: Props) {
             Settings
           </DialogTitle>
         </DialogHeader>
+
+        {/* Profile */}
+        <div className="space-y-3">
+          <p className="text-xs font-bold text-dc-muted uppercase tracking-wider">
+            Profile
+          </p>
+          <div className="flex items-center gap-4">
+            <UserAvatar
+              principal={principal}
+              name={name}
+              photoUrl={photoUrl}
+              size={64}
+              isMe
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                data-ocid="settings.profile.upload_button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 bg-dc-blurple text-white text-xs font-medium rounded hover:opacity-90 transition-opacity"
+              >
+                Change Photo
+              </button>
+              {photoUrl && (
+                <button
+                  type="button"
+                  data-ocid="settings.profile.delete_button"
+                  onClick={() => clearPhoto(myPrincipal ?? undefined)}
+                  className="px-3 py-1.5 bg-dc-chat text-dc-secondary text-xs font-medium rounded hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                >
+                  Remove Photo
+                </button>
+              )}
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            className="hidden"
+            data-ocid="settings.profile.dropzone"
+          />
+        </div>
+
+        <div className="border-t border-dc-serverbar" />
 
         {/* Appearance */}
         <div className="space-y-3">

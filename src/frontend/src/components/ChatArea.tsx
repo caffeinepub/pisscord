@@ -7,8 +7,11 @@ import {
   Pin,
   Search,
   Users,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useActor } from "../hooks/useActor";
+import { useProfilePhotos } from "../hooks/useProfilePhoto";
 import { useChannelMessages, useSendMessage } from "../hooks/useQueries";
 import { formatDistanceToNow } from "../utils/time";
 
@@ -36,14 +39,25 @@ interface Props {
 
 export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
   const [input, setInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { data: messages = [], isLoading } = useChannelMessages(channel);
   const { mutate: sendMessage, isPending } = useSendMessage();
+  const { actor } = useActor();
+
+  // Collect unique author principals from messages for photo fetching
+  const authorPrincipals = Array.from(
+    new Set(messages.map((m) => m.author.toString())),
+  );
+  const authorPhotos = useProfilePhotos(authorPrincipals, actor);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new messages
   useEffect(() => {
+    if (searchQuery) return; // don't auto-scroll when searching
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, searchQuery]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,6 +66,25 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
     setInput("");
     sendMessage({ channel, content });
   };
+
+  const displayChannel = channel
+    ? channel.startsWith(">")
+      ? channel.slice(1)
+      : channel
+    : null;
+
+  // Filter messages when search is active
+  const filteredMessages = searchQuery.trim()
+    ? messages.filter((msg) => {
+        const authorPrincipal = msg.author.toString();
+        const authorName =
+          memberNames[authorPrincipal] ?? `${authorPrincipal.slice(0, 8)}...`;
+        return (
+          msg.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          authorName.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      })
+    : messages;
 
   if (!channel) {
     return (
@@ -75,7 +108,7 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
       {/* Top bar */}
       <div className="h-12 px-4 flex items-center gap-3 border-b border-dc-serverbar shadow-sm flex-shrink-0">
         <Hash size={20} className="text-dc-secondary" />
-        <span className="font-semibold text-dc-primary">{channel}</span>
+        <span className="font-semibold text-dc-primary">{displayChannel}</span>
         <div className="ml-auto flex items-center gap-4 text-dc-secondary">
           <button
             type="button"
@@ -98,14 +131,34 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
           >
             <Users size={20} />
           </button>
-          <div className="flex items-center bg-dc-serverbar rounded px-2 py-1 gap-2">
+          <div className="flex items-center bg-dc-serverbar rounded px-2 py-1 gap-1.5">
             <input
+              ref={searchInputRef}
               placeholder="Search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="bg-transparent text-sm text-dc-primary placeholder-dc-muted focus:outline-none w-24"
               data-ocid="chat.search_input"
             />
-            <Search size={16} className="text-dc-secondary" />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-dc-muted hover:text-dc-primary transition-colors"
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            ) : (
+              <Search size={16} className="text-dc-secondary" />
+            )}
           </div>
+          {searchQuery && (
+            <span className="text-xs text-dc-muted whitespace-nowrap">
+              {filteredMessages.length} result
+              {filteredMessages.length !== 1 ? "s" : ""}
+            </span>
+          )}
           <button
             type="button"
             className="hover:text-dc-primary transition-colors"
@@ -143,24 +196,37 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
               <Hash size={32} className="text-dc-secondary" />
             </div>
             <h3 className="text-2xl font-bold text-dc-primary mb-1">
-              Welcome to #{channel}!
+              Welcome to #{displayChannel}!
             </h3>
             <p className="text-dc-secondary text-sm">
-              This is the beginning of the #{channel} channel.
+              This is the beginning of the #{displayChannel} channel.
             </p>
           </div>
         )}
 
-        {messages.map((msg, idx) => {
+        {!isLoading &&
+          messages.length > 0 &&
+          filteredMessages.length === 0 &&
+          searchQuery && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Search size={32} className="text-dc-muted mb-3" />
+              <p className="text-dc-secondary text-sm">
+                No messages match &ldquo;{searchQuery}&rdquo;
+              </p>
+            </div>
+          )}
+
+        {filteredMessages.map((msg, idx) => {
           const authorPrincipal = msg.author.toString();
           const authorName =
             memberNames[authorPrincipal] ?? `${authorPrincipal.slice(0, 8)}...`;
           const isMe = authorPrincipal === myPrincipal;
-          const prevMsg = messages[idx - 1];
+          const prevMsg = filteredMessages[idx - 1];
           const isContinuation =
             prevMsg &&
             prevMsg.author.toString() === authorPrincipal &&
             Number(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1_000_000_000;
+          const authorPhoto = authorPhotos[authorPrincipal] ?? null;
 
           return (
             <div
@@ -169,12 +235,20 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
               className={`flex items-start gap-4 px-2 py-0.5 rounded hover:bg-dc-hover group transition-colors ${isContinuation ? "mt-0" : "mt-4"}`}
             >
               {!isContinuation ? (
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 mt-0.5"
-                  style={{ backgroundColor: getUserColor(authorPrincipal) }}
-                >
-                  {authorName.charAt(0).toUpperCase()}
-                </div>
+                authorPhoto ? (
+                  <img
+                    src={authorPhoto}
+                    alt={authorName}
+                    className="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-0.5"
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 mt-0.5"
+                    style={{ backgroundColor: getUserColor(authorPrincipal) }}
+                  >
+                    {authorName.charAt(0).toUpperCase()}
+                  </div>
+                )
               ) : (
                 <div className="w-10 flex-shrink-0" />
               )}
@@ -224,7 +298,7 @@ export default function ChatArea({ channel, memberNames, myPrincipal }: Props) {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={`Message #${channel}`}
+            placeholder={`Message #${displayChannel}`}
             className="flex-1 bg-transparent text-dc-primary placeholder-dc-muted focus:outline-none text-sm"
           />
           <button

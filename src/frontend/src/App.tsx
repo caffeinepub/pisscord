@@ -1,19 +1,31 @@
 import { Toaster } from "@/components/ui/sonner";
 import type { Principal } from "@icp-sdk/core/principal";
+import { Principal as PrincipalClass } from "@icp-sdk/core/principal";
 import { Hash, Layers, MessageSquare, Users } from "lucide-react";
+import { AnimatePresence } from "motion/react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import BrowseServersModal from "./components/BrowseServersModal";
 import ChannelSidebar from "./components/ChannelSidebar";
 import ChatArea from "./components/ChatArea";
 import CreateServerModal from "./components/CreateServerModal";
+import DMCallRinger from "./components/DMCallRinger";
+import DMCallScreen from "./components/DMCallScreen";
+import DMSidebar from "./components/DMSidebar";
+import DmChatArea from "./components/DmChatArea";
+import NewDmModal from "./components/NewDmModal";
 import ServerBar from "./components/ServerBar";
 import UsernameModal from "./components/UsernameModal";
 import VoiceChannel from "./components/VoiceChannel";
 import { useActor } from "./hooks/useActor";
 import { useAudioSettings } from "./hooks/useAudioSettings";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
+import { useProfilePhotos } from "./hooks/useProfilePhoto";
 import {
+  useAllUsers,
+  useCreateGroupDM,
+  useMyConversations,
+  useMyGroupDMs,
   useServerMembers,
   useUserProfile,
   useUserServers,
@@ -32,6 +44,28 @@ export default function App() {
   const { data: userProfile, isLoading: profileLoading } = useUserProfile();
   const { data: userServers = [] } = useUserServers();
 
+  // DM state
+  const [activeView, setActiveView] = useState<"servers" | "dms">("servers");
+  const [activeDmPrincipal, setActiveDmPrincipal] = useState<string | null>(
+    null,
+  );
+  const [activeGroupId, setActiveGroupId] = useState<bigint | null>(null);
+  const dmConversationType = activeGroupId !== null ? "group" : "dm";
+  const [showNewDm, setShowNewDm] = useState(false);
+
+  // DM call state
+  const [activeDmCall, setActiveDmCall] = useState<{
+    dmChannelId: string;
+    members: Principal[];
+  } | null>(null);
+  const [incomingRings, setIncomingRings] = useState<
+    Array<{
+      dmChannelId: string;
+      callerName: string;
+    }>
+  >([]);
+
+  // Server state
   const [activeServerId, setActiveServerId] = useState<bigint | null>(null);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [selectedVoiceChannel, setSelectedVoiceChannel] = useState<
@@ -46,6 +80,24 @@ export default function App() {
   const [activeMobileTab, setActiveMobileTab] = useState<
     "servers" | "channels" | "chat" | "members"
   >("chat");
+
+  // DM queries
+  const { data: conversations = [] } = useMyConversations();
+  const { data: allUsers = [] } = useAllUsers();
+  const { data: groupDMs = [] } = useMyGroupDMs();
+  const { mutateAsync: createGroupDM } = useCreateGroupDM();
+
+  // Build a name map from all registered users for DM view
+  const dmUserNames: Record<string, string> = {};
+  for (const [principal, profile] of allUsers) {
+    const pStr = principal.toString();
+    if (profile.name?.trim()) {
+      dmUserNames[pStr] = profile.name;
+    }
+  }
+  if (myPrincipal && userProfile?.name) {
+    dmUserNames[myPrincipal] = userProfile.name;
+  }
 
   const activeServer = userServers.find((s) => s.id === activeServerId) ?? null;
   const isOwner = !!(
@@ -79,7 +131,20 @@ export default function App() {
     setActiveServerId(id);
     setActiveChannel(null);
     setSelectedVoiceChannel(null);
+    setActiveView("servers");
   }, []);
+
+  const handleOpenDMs = useCallback(() => {
+    setActiveView("dms");
+    // Auto-select the most recent conversation if none selected yet
+    if (
+      conversations.length > 0 &&
+      activeDmPrincipal === null &&
+      activeGroupId === null
+    ) {
+      setActiveDmPrincipal(conversations[0][0].toString());
+    }
+  }, [conversations, activeDmPrincipal, activeGroupId]);
 
   const handleSelectTextChannel = useCallback((channel: string) => {
     setActiveChannel(channel);
@@ -145,6 +210,168 @@ export default function App() {
     ? { ...memberNames, [myPrincipal]: userProfile?.name ?? "You" }
     : memberNames;
 
+  // Async profile photos for the mobile member list
+  const mobileMemberPrincipals = memberPrincipals.map((p: Principal) =>
+    p.toString(),
+  );
+  const mobileMemberPhotos = useProfilePhotos(mobileMemberPrincipals, actor);
+
+  // Poll for incoming DM calls
+  const incomingRingsRef = useRef(incomingRings);
+  incomingRingsRef.current = incomingRings;
+  const activeDmCallRef = useRef(activeDmCall);
+  activeDmCallRef.current = activeDmCall;
+  // Use refs for name maps to avoid them as effect deps (they're computed values)
+  const dmUserNamesRef = useRef(dmUserNames);
+  dmUserNamesRef.current = dmUserNames;
+  const enrichedNamesRef = useRef(enrichedNames);
+  enrichedNamesRef.current = enrichedNames;
+
+  useEffect(() => {
+    if (!actor || !myPrincipal) return;
+
+    const poll = async () => {
+      // Collect all channel IDs to poll
+      const channelIds: string[] = [
+        ...conversations.map(([p]) => p.toString()),
+        ...groupDMs.map((g) => g.id.toString()),
+      ];
+
+      for (const channelId of channelIds) {
+        try {
+          const callState = await actor.getDMCallState(channelId);
+          if (!callState) continue;
+
+          // Skip if we're already in this call
+          if (activeDmCallRef.current?.dmChannelId === channelId) continue;
+
+          // Check if current user is already a participant
+          const amParticipant = callState.participants.some(
+            (p) => p.toString() === myPrincipal,
+          );
+          if (amParticipant) continue;
+
+          // Check if already ringing
+          const alreadyRinging = incomingRingsRef.current.some(
+            (r) => r.dmChannelId === channelId,
+          );
+          if (alreadyRinging) continue;
+
+          // Get caller name — read via ref to avoid stale closure
+          const callerPrincipal = callState.initiator.toString();
+          const callerName =
+            dmUserNamesRef.current[callerPrincipal] ||
+            enrichedNamesRef.current[callerPrincipal] ||
+            `${callerPrincipal.slice(0, 8)}...`;
+
+          setIncomingRings((prev) => [
+            ...prev,
+            { dmChannelId: channelId, callerName },
+          ]);
+        } catch {
+          // ignore individual poll failures
+        }
+      }
+
+      // Bug 2 fix: sweep existing rings — remove any whose call state is gone
+      // (handles the case where the caller hangs up before the callee clicks anything)
+      const existingRings = incomingRingsRef.current;
+      if (existingRings.length > 0) {
+        const toRemove: string[] = [];
+        await Promise.all(
+          existingRings.map(async (ring) => {
+            try {
+              const state = await actor.getDMCallState(ring.dmChannelId);
+              if (!state) toRemove.push(ring.dmChannelId);
+            } catch {
+              // ignore
+            }
+          }),
+        );
+        if (toRemove.length > 0) {
+          setIncomingRings((prev) =>
+            prev.filter((r) => !toRemove.includes(r.dmChannelId)),
+          );
+        }
+      }
+    };
+
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [actor, myPrincipal, conversations, groupDMs]);
+
+  // Handler: start a DM call
+  const handleStartCall = useCallback(
+    async (dmChannelId: string, members: Principal[]) => {
+      if (!actor) return;
+      try {
+        await actor.startDMCall(dmChannelId, members);
+        await actor.joinDMCall(dmChannelId);
+        setActiveDmCall({ dmChannelId, members });
+      } catch (e) {
+        console.warn("Failed to start DM call", e);
+      }
+    },
+    [actor],
+  );
+
+  // Handler: accept a ringing call
+  const handleAcceptRing = useCallback(
+    async (dmChannelId: string) => {
+      if (!actor) return;
+      try {
+        await actor.joinDMCall(dmChannelId);
+
+        // Figure out members for this channel
+        let members: Principal[] = [];
+        const directConv = conversations.find(
+          ([p]) => p.toString() === dmChannelId,
+        );
+        if (directConv) {
+          members = [
+            PrincipalClass.fromText(dmChannelId),
+            ...(myPrincipal ? [PrincipalClass.fromText(myPrincipal)] : []),
+          ];
+        } else {
+          const group = groupDMs.find((g) => g.id.toString() === dmChannelId);
+          if (group) members = group.members;
+        }
+
+        setActiveDmCall({ dmChannelId, members });
+        setIncomingRings((prev) =>
+          prev.filter((r) => r.dmChannelId !== dmChannelId),
+        );
+      } catch (e) {
+        console.warn("Failed to accept call", e);
+      }
+    },
+    [actor, conversations, groupDMs, myPrincipal],
+  );
+
+  // Handler: handle new DM selection from modal
+  const handleSelectUsers = useCallback(
+    async (principals: string[]) => {
+      if (principals.length === 1) {
+        // 1-on-1 DM
+        setActiveDmPrincipal(principals[0]);
+        setActiveGroupId(null);
+        setActiveView("dms");
+      } else {
+        // Group DM
+        try {
+          const members = principals.map((p) => PrincipalClass.fromText(p));
+          const groupId = await createGroupDM(members);
+          setActiveGroupId(groupId);
+          setActiveDmPrincipal(null);
+          setActiveView("dms");
+        } catch (e) {
+          console.warn("Failed to create group DM", e);
+        }
+      }
+    },
+    [createGroupDM],
+  );
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-dc-chat flex items-center justify-center">
@@ -154,10 +381,10 @@ export default function App() {
           className="text-center px-4"
         >
           <div className="w-20 h-20 bg-dc-blurple rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-            <span className="text-white text-4xl font-black">C</span>
+            <span className="text-white text-4xl font-black">P</span>
           </div>
           <h1 className="text-4xl font-black text-dc-primary mb-2">
-            Welcome to Cordis
+            Welcome to Pisscord
           </h1>
           <p className="text-dc-secondary mb-8 max-w-sm mx-auto">
             Your decentralized community platform. Sign in to join servers and
@@ -205,10 +432,12 @@ export default function App() {
 
   const serverBarProps = {
     servers: userServers,
-    activeServerId,
+    activeServerId: activeView === "servers" ? activeServerId : null,
     onSelectServer: handleSelectServer,
     onCreateServer: () => setShowCreateServer(true),
     onBrowseServers: () => setShowBrowseServers(true),
+    onOpenDMs: handleOpenDMs,
+    isDmActive: activeView === "dms",
   };
 
   const channelSidebarProps = {
@@ -240,8 +469,81 @@ export default function App() {
     />
   );
 
+  // Merged names for DM view (all registered users + server member names)
+  const mergedDmNames = { ...enrichedNames, ...dmUserNames };
+
+  // Resolve group members for active group
+  const activeGroupData =
+    activeGroupId !== null
+      ? (groupDMs.find((g) => g.id === activeGroupId) ?? null)
+      : null;
+  const groupCallMembers: Principal[] = activeGroupData?.members ?? [];
+
+  const dmContent = activeDmCall ? (
+    <DMCallScreen
+      key={activeDmCall.dmChannelId}
+      dmChannelId={activeDmCall.dmChannelId}
+      allMembers={activeDmCall.members}
+      memberNames={mergedDmNames}
+      myPrincipal={myPrincipal}
+      onEnd={() => setActiveDmCall(null)}
+    />
+  ) : (
+    <DmChatArea
+      conversationType={dmConversationType}
+      otherPrincipal={dmConversationType === "dm" ? activeDmPrincipal : null}
+      groupId={dmConversationType === "group" ? activeGroupId : null}
+      memberNames={mergedDmNames}
+      myPrincipal={myPrincipal}
+      onStartCall={handleStartCall}
+    />
+  );
+
+  const dmSidebar = (
+    <DMSidebar
+      myPrincipal={myPrincipal}
+      memberNames={mergedDmNames}
+      activeDmPrincipal={dmConversationType === "dm" ? activeDmPrincipal : null}
+      activeGroupId={
+        dmConversationType === "group"
+          ? (activeGroupId?.toString() ?? null)
+          : null
+      }
+      onSelectDm={(p) => {
+        setActiveDmPrincipal(p);
+        setActiveGroupId(null);
+      }}
+      onSelectGroup={(groupId) => {
+        setActiveGroupId(BigInt(groupId));
+        setActiveDmPrincipal(null);
+      }}
+      onOpenNewDm={() => setShowNewDm(true)}
+      onOpenSettings={() => {}}
+    />
+  );
+
+  // Suppress unused var for groupCallMembers
+  void groupCallMembers;
+
   return (
     <>
+      {/* Incoming call ringers — shown above everything */}
+      <AnimatePresence>
+        {incomingRings.map((ring) => (
+          <DMCallRinger
+            key={ring.dmChannelId}
+            dmChannelId={ring.dmChannelId}
+            callerName={ring.callerName}
+            onAccept={() => handleAcceptRing(ring.dmChannelId)}
+            onDecline={() =>
+              setIncomingRings((prev) =>
+                prev.filter((r) => r.dmChannelId !== ring.dmChannelId),
+              )
+            }
+          />
+        ))}
+      </AnimatePresence>
+
       {/* Mobile layout — bottom tab bar navigation */}
       <div className="flex flex-col h-screen w-screen md:hidden">
         <div className="flex-1 overflow-hidden">
@@ -252,11 +554,40 @@ export default function App() {
           )}
           {activeMobileTab === "channels" && (
             <div className="h-full flex flex-col overflow-hidden">
-              <ChannelSidebar {...channelSidebarProps} />
+              {activeView === "dms" ? (
+                <DMSidebar
+                  myPrincipal={myPrincipal}
+                  memberNames={mergedDmNames}
+                  activeDmPrincipal={
+                    dmConversationType === "dm" ? activeDmPrincipal : null
+                  }
+                  activeGroupId={
+                    dmConversationType === "group"
+                      ? (activeGroupId?.toString() ?? null)
+                      : null
+                  }
+                  onSelectDm={(p) => {
+                    setActiveDmPrincipal(p);
+                    setActiveGroupId(null);
+                    setActiveMobileTab("chat");
+                  }}
+                  onSelectGroup={(groupId) => {
+                    setActiveGroupId(BigInt(groupId));
+                    setActiveDmPrincipal(null);
+                    setActiveMobileTab("chat");
+                  }}
+                  onOpenNewDm={() => setShowNewDm(true)}
+                  onOpenSettings={() => {}}
+                />
+              ) : (
+                <ChannelSidebar {...channelSidebarProps} />
+              )}
             </div>
           )}
           {activeMobileTab === "chat" && (
-            <main className="h-full flex overflow-hidden">{voiceOrChat}</main>
+            <main className="h-full flex overflow-hidden">
+              {activeView === "dms" ? dmContent : voiceOrChat}
+            </main>
           )}
           {activeMobileTab === "members" && (
             <div className="h-full bg-dc-sidebar overflow-y-auto p-4">
@@ -274,14 +605,22 @@ export default function App() {
                     data-ocid={`mobile.member.item.${idx + 1}`}
                     className="flex items-center gap-3 py-2 px-2 rounded hover:bg-dc-channelhover transition-colors"
                   >
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                      style={{
-                        backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
-                      }}
-                    >
-                      {name.charAt(0).toUpperCase()}
-                    </div>
+                    {mobileMemberPhotos[principal] ? (
+                      <img
+                        src={mobileMemberPhotos[principal]!}
+                        alt={name}
+                        className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+                      />
+                    ) : (
+                      <div
+                        className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                        style={{
+                          backgroundColor: `oklch(0.55 0.20 ${(principal.charCodeAt(0) * 37) % 360})`,
+                        }}
+                      >
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <span className="text-sm text-dc-secondary">
                       {name}
                       {isMe ? " (you)" : ""}
@@ -306,7 +645,11 @@ export default function App() {
           {(
             [
               { id: "servers" as const, icon: Layers, label: "Servers" },
-              { id: "channels" as const, icon: Hash, label: "Channels" },
+              {
+                id: "channels" as const,
+                icon: Hash,
+                label: activeView === "dms" ? "DMs" : "Channels",
+              },
               { id: "chat" as const, icon: MessageSquare, label: "Chat" },
               { id: "members" as const, icon: Users, label: "Members" },
             ] as const
@@ -330,8 +673,14 @@ export default function App() {
       {/* Desktop layout — unchanged */}
       <div className="hidden md:flex h-screen w-screen overflow-hidden">
         <ServerBar {...serverBarProps} />
-        <ChannelSidebar {...channelSidebarProps} />
-        <main className="flex-1 flex overflow-hidden">{voiceOrChat}</main>
+        {activeView === "dms" ? (
+          dmSidebar
+        ) : (
+          <ChannelSidebar {...channelSidebarProps} />
+        )}
+        <main className="flex-1 flex overflow-hidden">
+          {activeView === "dms" ? dmContent : voiceOrChat}
+        </main>
       </div>
 
       <CreateServerModal
@@ -346,6 +695,12 @@ export default function App() {
           handleSelectServer(id);
           setShowBrowseServers(false);
         }}
+      />
+      <NewDmModal
+        open={showNewDm}
+        onClose={() => setShowNewDm(false)}
+        onSelectUsers={handleSelectUsers}
+        myPrincipal={myPrincipal}
       />
       <Toaster />
     </>

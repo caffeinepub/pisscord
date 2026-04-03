@@ -4,7 +4,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Compass, Plus } from "lucide-react";
+import { Compass, MessageCircle, Plus } from "lucide-react";
 import { motion } from "motion/react";
 import type { Server } from "../backend";
 
@@ -27,6 +27,8 @@ interface Props {
   onSelectServer: (id: bigint) => void;
   onCreateServer: () => void;
   onBrowseServers: () => void;
+  onOpenDMs: () => void;
+  isDmActive: boolean;
 }
 
 export default function ServerBar({
@@ -35,23 +37,32 @@ export default function ServerBar({
   onSelectServer,
   onCreateServer,
   onBrowseServers,
+  onOpenDMs,
+  isDmActive,
 }: Props) {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex flex-col items-center gap-2 w-[72px] min-w-[72px] bg-dc-serverbar py-3 overflow-y-auto">
-        {/* Home button */}
+        {/* Home / DMs button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               data-ocid="server.home_button"
-              onClick={() => onSelectServer(BigInt(-1))}
-              className="w-12 h-12 rounded-[50%] hover:rounded-[30%] bg-dc-blurple flex items-center justify-center text-white font-bold text-lg transition-all duration-200"
+              onClick={onOpenDMs}
+              className={`relative w-12 h-12 flex items-center justify-center text-white font-bold text-lg transition-all duration-200 ${
+                isDmActive
+                  ? "rounded-[30%] bg-dc-blurple"
+                  : "rounded-[50%] hover:rounded-[30%] bg-dc-blurple"
+              }`}
             >
-              C
+              {isDmActive && (
+                <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-8 bg-white rounded-r-full" />
+              )}
+              <MessageCircle size={22} />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right">Home</TooltipContent>
+          <TooltipContent side="right">Direct Messages</TooltipContent>
         </Tooltip>
 
         <div className="w-8 h-[2px] bg-dc-sidebar rounded-full" />

@@ -55,6 +55,29 @@ function getAvatarColor(principal: string): string {
   return `oklch(0.55 0.20 ${hue})`;
 }
 
+function getProfilePhoto(principalStr: string): string | null {
+  try {
+    return localStorage.getItem(`profilePhoto_${principalStr}`);
+  } catch {
+    return null;
+  }
+}
+
+function getSavedVolume(principalStr: string): number {
+  try {
+    const saved = localStorage.getItem(`userVolume_${principalStr}`);
+    return saved !== null ? Number(saved) : 100;
+  } catch {
+    return 100;
+  }
+}
+
+function saveVolume(principalStr: string, value: number) {
+  try {
+    localStorage.setItem(`userVolume_${principalStr}`, String(value));
+  } catch {}
+}
+
 interface Props {
   channelName: string;
   memberNames: Record<string, string>;
@@ -78,6 +101,8 @@ export default function VoiceChannel({
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
+  const [volumePopoverFor, setVolumePopoverFor] = useState<string | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -94,6 +119,10 @@ export default function VoiceChannel({
 
   const { data: presence = [] } = useVoiceChannelPresence(channelName);
   const { data: signals = [] } = useGetMySignals(channelName, isJoined);
+
+  // Keep a ref to presence so we can access real Principal objects in effects
+  const presenceRef = useRef<Principal[]>([]);
+  presenceRef.current = presence;
 
   const displayName = channelName.startsWith("!")
     ? channelName.slice(1)
@@ -119,6 +148,9 @@ export default function VoiceChannel({
         if (!audio) {
           audio = new Audio();
           audio.autoplay = true;
+          // Apply saved volume
+          const savedVol = getSavedVolume(remotePrincipal);
+          audio.volume = Math.min(savedVol / 100, 3);
           remoteAudioRefs.current.set(remotePrincipal, audio);
         }
         audio.srcObject = event.streams[0];
@@ -160,9 +192,9 @@ export default function VoiceChannel({
 
             await waitForIceGathering(pc);
 
-            const p = { toString: () => fromPrincipal } as Principal;
+            // CRITICAL: use sig.from directly — it is a real ICP Principal from the backend
             await actor.sendSignal(
-              p,
+              sig.from,
               channelRef.current,
               "answer",
               JSON.stringify(pc.localDescription),
@@ -235,9 +267,9 @@ export default function VoiceChannel({
 
             await waitForIceGathering(pc);
 
-            const principal = { toString: () => remotePrincipal } as Principal;
+            // CRITICAL: use p directly — it is the real ICP Principal object from the presence array
             await actor.sendSignal(
-              principal,
+              p,
               channelRef.current,
               "offer",
               JSON.stringify(pc.localDescription),
@@ -342,10 +374,33 @@ export default function VoiceChannel({
     }
   };
 
+  const handleVolumeChange = (principal: string, value: number) => {
+    setUserVolumes((prev) => ({ ...prev, [principal]: value }));
+    saveVolume(principal, value);
+    const audio = remoteAudioRefs.current.get(principal);
+    if (audio) {
+      audio.volume = Math.min(value / 100, 3);
+    }
+  };
+
+  const handleTileClick = (principal: string) => {
+    if (principal === myPrincipal) return;
+    setVolumePopoverFor((prev) => (prev === principal ? null : principal));
+  };
+
   const presencePrincipals = presence.map((p) => p.toString());
 
   return (
-    <div className="flex-1 flex flex-col bg-dc-chat min-w-0">
+    <div
+      className="flex-1 flex flex-col bg-dc-chat min-w-0"
+      onClick={(e) => {
+        // Close popover when clicking outside
+        if (!(e.target as HTMLElement).closest("[data-volume-popover]")) {
+          setVolumePopoverFor(null);
+        }
+      }}
+      onKeyDown={undefined}
+    >
       <div className="h-12 px-4 flex items-center gap-3 border-b border-dc-serverbar shadow-sm flex-shrink-0">
         <Volume2 size={20} className="text-dc-secondary" />
         <span className="font-semibold text-dc-primary">{displayName}</span>
@@ -362,7 +417,10 @@ export default function VoiceChannel({
           <button
             type="button"
             data-ocid="voice.open_modal_button"
-            onClick={() => setShowSettings(true)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSettings(true);
+            }}
             title="Voice channel settings"
             className="ml-auto text-dc-muted hover:text-dc-primary transition-colors"
           >
@@ -389,24 +447,93 @@ export default function VoiceChannel({
                   memberNames[principal] || `${principal.slice(0, 8)}...`;
                 const isMe = principal === myPrincipal;
                 const avatarColor = getAvatarColor(principal);
+                const photo = getProfilePhoto(principal);
+                const volume =
+                  userVolumes[principal] ?? getSavedVolume(principal);
+                const isPopoverOpen = volumePopoverFor === principal;
 
                 return (
                   <div
                     key={principal}
                     className="flex flex-col items-center gap-2"
+                    data-volume-popover
                   >
                     <div className="relative">
-                      <div
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg"
-                        style={{ backgroundColor: avatarColor }}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTileClick(principal);
+                        }}
+                        className={`block rounded-full focus:outline-none ${
+                          !isMe
+                            ? "cursor-pointer hover:ring-2 hover:ring-white/30"
+                            : "cursor-default"
+                        }`}
+                        title={isMe ? undefined : "Click to adjust volume"}
                       >
-                        {name.charAt(0).toUpperCase()}
-                      </div>
+                        {photo ? (
+                          <img
+                            src={photo}
+                            alt={name}
+                            className="w-16 h-16 rounded-full object-cover shadow-lg"
+                          />
+                        ) : (
+                          <div
+                            className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg"
+                            style={{ backgroundColor: avatarColor }}
+                          >
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </button>
                       <span className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-dc-chat" />
                     </div>
                     <span className="text-xs text-dc-secondary text-center max-w-[80px] truncate">
                       {isMe ? `${name} (you)` : name}
                     </span>
+
+                    {/* Volume popover */}
+                    {isPopoverOpen && !isMe && (
+                      <div
+                        data-volume-popover
+                        className="absolute mt-1 z-50 bg-dc-sidebar border border-dc-serverbar rounded-lg shadow-xl p-3 w-48"
+                        style={{ transform: "translateX(-50%)", left: "50%" }}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={undefined}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold text-dc-primary truncate">
+                            {name}
+                          </span>
+                          <span className="text-xs text-dc-muted ml-2 flex-shrink-0">
+                            {volume}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Volume2
+                            size={12}
+                            className="text-dc-muted flex-shrink-0"
+                          />
+                          <input
+                            type="range"
+                            min="0"
+                            max="300"
+                            value={volume}
+                            onChange={(e) =>
+                              handleVolumeChange(
+                                principal,
+                                Number(e.target.value),
+                              )
+                            }
+                            className="flex-1 h-1.5 appearance-none bg-dc-serverbar rounded-full cursor-pointer"
+                            style={{
+                              accentColor: "oklch(0.55 0.22 264)",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -448,7 +575,10 @@ export default function VoiceChannel({
               <button
                 type="button"
                 data-ocid="voice.toggle"
-                onClick={toggleMute}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleMute();
+                }}
                 title={isMuted ? "Unmute" : "Mute"}
                 className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
                   isMuted
@@ -466,7 +596,10 @@ export default function VoiceChannel({
               <button
                 type="button"
                 data-ocid="voice.delete_button"
-                onClick={handleLeave}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleLeave();
+                }}
                 title="Leave voice channel"
                 className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-500 flex items-center justify-center transition-colors"
               >
