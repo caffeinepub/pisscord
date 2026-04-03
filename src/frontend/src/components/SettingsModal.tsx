@@ -14,9 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useRef } from "react";
-import { useActor } from "../hooks/useActor";
 import { useAudioSettings } from "../hooks/useAudioSettings";
-import { useProfilePhoto } from "../hooks/useProfilePhoto";
 import UserAvatar from "./UserAvatar";
 
 interface Props {
@@ -25,6 +23,10 @@ interface Props {
   showBitrate: boolean;
   myPrincipal?: string | null;
   myName?: string;
+  // Photo props lifted from App.tsx so photo loads regardless of modal open state
+  photoUrl: string | null;
+  onSavePhoto: (dataUrl: string, principalStr?: string) => Promise<void>;
+  onClearPhoto: (principalStr?: string) => Promise<void>;
 }
 
 export default function SettingsModal({
@@ -33,13 +35,11 @@ export default function SettingsModal({
   showBitrate,
   myPrincipal,
   myName,
+  photoUrl,
+  onSavePhoto,
+  onClearPhoto,
 }: Props) {
   const { settings, update } = useAudioSettings();
-  const { actor } = useActor();
-  const { photoUrl, savePhoto, clearPhoto } = useProfilePhoto(
-    actor,
-    myPrincipal,
-  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,8 +58,7 @@ export default function SettingsModal({
         const sx = (img.width - min) / 2;
         const sy = (img.height - min) / 2;
         ctx.drawImage(img, sx, sy, min, min, 0, 0, 128, 128);
-        // Save to backend (actor is available via hook)
-        savePhoto(
+        onSavePhoto(
           canvas.toDataURL("image/jpeg", 0.85),
           myPrincipal ?? undefined,
         );
@@ -112,7 +111,7 @@ export default function SettingsModal({
                 <button
                   type="button"
                   data-ocid="settings.profile.delete_button"
-                  onClick={() => clearPhoto(myPrincipal ?? undefined)}
+                  onClick={() => onClearPhoto(myPrincipal ?? undefined)}
                   className="px-3 py-1.5 bg-dc-chat text-dc-secondary text-xs font-medium rounded hover:text-red-400 hover:bg-red-900/20 transition-colors"
                 >
                   Remove Photo

@@ -106,6 +106,7 @@ export default function DMCallScreen({
   );
 
   const [isConnected, setIsConnected] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
 
   const { data: presence = [] } = useGetDMCallPresence(dmChannelId, true);
   const { data: signals = [] } = useGetMyDMSignals(dmChannelId, true);
@@ -165,6 +166,7 @@ export default function DMCallScreen({
         setIsConnected(true);
       } catch (e) {
         console.error("DM call: failed to get mic", e);
+        setMicError("Microphone access denied — cannot connect to call.");
       }
     };
     setup();
@@ -537,6 +539,13 @@ export default function DMCallScreen({
           {formatTime(elapsed)}
         </span>
       </div>
+
+      {/* Mic error banner */}
+      {micError && (
+        <div className="mx-4 mt-3 px-4 py-3 bg-red-900/40 border border-red-600/50 rounded-lg text-red-300 text-sm font-medium text-center flex-shrink-0">
+          {micError}
+        </div>
+      )}
 
       {/* Participant tiles */}
       <div className="flex-1 flex items-center justify-center px-6 py-8">

@@ -77,6 +77,7 @@ export interface backendInterface {
     getConversations(): Promise<Array<[Principal, Array<Message>]>>;
     getDMCallPresence(dmChannelId: string): Promise<Array<Principal>>;
     getDMCallState(dmChannelId: string): Promise<DMCallState | null>;
+    getDMInvitedMembers(dmChannelId: string): Promise<Array<Principal>>;
     getGroupDMMessages(groupId: Id): Promise<Array<GroupMessage>>;
     getMyConversations(): Promise<Array<[Principal, Array<Message>]>>;
     getMyDMSignals(dmChannelId: string): Promise<Array<Signal>>;

@@ -53,6 +53,8 @@ actor {
     timestamp : Time.Time;
   };
 
+  // DMCallState type is kept identical to the previous stable version.
+  // invitedMembers is stored separately in dmCallInvitedMembers map.
   type DMCallState = {
     dmChannelId : Text;
     initiator : Principal;
@@ -91,6 +93,8 @@ actor {
   let groupConversations = Map.empty<Id, GroupConversation>();
   let dmCallStates = Map.empty<Text, DMCallState>();
   let dmSignals = List.empty<Signal>();
+  // Separate map for invited members — avoids breaking DMCallState stable type
+  let dmCallInvitedMembers = Map.empty<Text, [Principal]>();
 
   var nextId = 0;
 
@@ -121,6 +125,7 @@ actor {
     };
     for (key in staleKeys.values()) {
       dmCallStates.remove(key);
+      dmCallInvitedMembers.remove(key);
     };
   };
 
@@ -768,6 +773,9 @@ actor {
     result.toArray();
   };
 
+  // startDMCall: store ONLY [initiator] in participants.
+  // invitedMembers stored separately in dmCallInvitedMembers to preserve
+  // stable type compatibility with the previous DMCallState shape.
   public shared ({ caller }) func startDMCall(dmChannelId : Text, members : [Principal]) : async () {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can start calls");
@@ -775,15 +783,17 @@ actor {
     // Prune stale call states before creating a new one
     pruneStaleCallStates();
     let initiator = caller;
-    // Include all provided members; ensure initiator is present
+    // invitedMembers: everyone invited (ensure initiator is included)
     let hasInitiator = members.find(func(p) { p == initiator }).isSome();
-    let participants = if (hasInitiator) { members } else { members.concat([initiator]) };
+    let invitedMembers = if (hasInitiator) { members } else { members.concat([initiator]) };
+    // participants: only the initiator at start; others join via joinDMCall
     dmCallStates.add(dmChannelId, {
       dmChannelId;
       initiator;
-      participants;
+      participants = [initiator];
       startedAt = Time.now();
     });
+    dmCallInvitedMembers.add(dmChannelId, invitedMembers);
   };
 
   public query ({ caller }) func getDMCallState(dmChannelId : Text) : async ?DMCallState {
@@ -804,18 +814,23 @@ actor {
     };
   };
 
+  // endDMCall: no-op if call does not exist (prevents trap when both users hang up)
   public shared ({ caller }) func endDMCall(dmChannelId : Text) : async () {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can end calls");
     };
-    let callState = switch (dmCallStates.get(dmChannelId)) {
-      case (null) { Runtime.trap("Call does not exist") };
-      case (?c) { c };
+    switch (dmCallStates.get(dmChannelId)) {
+      case (null) { return }; // already ended — no-op
+      case (?callState) {
+        let isParticipant = callState.participants.find(func(x) { x == caller }).isSome();
+        let isInitiator = callState.initiator == caller;
+        if (not isParticipant and not isInitiator) {
+          Runtime.trap("Not a participant in this call");
+        };
+        dmCallStates.remove(dmChannelId);
+        dmCallInvitedMembers.remove(dmChannelId);
+      };
     };
-    if (not callState.participants.find(func(x) { x == caller }).isSome()) {
-      Runtime.trap("Not a participant in this call");
-    };
-    dmCallStates.remove(dmChannelId);
   };
 
   public shared ({ caller }) func joinDMCall(dmChannelId : Text) : async () {
@@ -844,6 +859,18 @@ actor {
     switch (dmCallStates.get(dmChannelId)) {
       case (null) { Runtime.trap("Call does not exist") };
       case (?state) { state.participants };
+    };
+  };
+
+  // getDMInvitedMembers: returns the full invited members list for UI tile display.
+  // Stored separately from DMCallState to preserve stable type compatibility.
+  public query ({ caller }) func getDMInvitedMembers(dmChannelId : Text) : async [Principal] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can get call members");
+    };
+    switch (dmCallInvitedMembers.get(dmChannelId)) {
+      case (null) { [] };
+      case (?members) { members };
     };
   };
 

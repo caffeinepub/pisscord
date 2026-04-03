@@ -54,7 +54,10 @@ export default function ChannelSidebar({
   const { identity } = useInternetIdentity();
   const { actor } = useActor();
   const myPrincipal = identity?.getPrincipal().toString();
-  const { photoUrl } = useProfilePhoto(actor, myPrincipal);
+  const { photoUrl, savePhoto, clearPhoto } = useProfilePhoto(
+    actor,
+    myPrincipal,
+  );
   const myName = memberNames[myPrincipal || ""] || "?";
 
   // Fetch profile photos for all members asynchronously
@@ -423,6 +426,9 @@ export default function ChannelSidebar({
         showBitrate={false}
         myPrincipal={myPrincipal}
         myName={myName}
+        photoUrl={photoUrl}
+        onSavePhoto={savePhoto}
+        onClearPhoto={clearPhoto}
       />
     </>
   );

@@ -1,5 +1,6 @@
 import { MessageSquare, Plus, Search, Settings, Users } from "lucide-react";
 import { useState } from "react";
+import { useActor } from "../hooks/useActor";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import { useProfilePhoto } from "../hooks/useProfilePhoto";
 import { useMyConversations, useMyGroupDMs } from "../hooks/useQueries";
@@ -39,7 +40,11 @@ export default function DMSidebar({
   const [showSettings, setShowSettings] = useState(false);
   const [conversationFilter, setConversationFilter] = useState("");
   const { identity } = useInternetIdentity();
-  const { photoUrl } = useProfilePhoto();
+  const { actor } = useActor();
+  const { photoUrl, savePhoto, clearPhoto } = useProfilePhoto(
+    actor,
+    myPrincipal,
+  );
   const myName =
     memberNames[myPrincipal || ""] ||
     identity?.getPrincipal().toString().slice(0, 8) ||
@@ -258,6 +263,9 @@ export default function DMSidebar({
         showBitrate={false}
         myPrincipal={myPrincipal}
         myName={myName}
+        photoUrl={photoUrl}
+        onSavePhoto={savePhoto}
+        onClearPhoto={clearPhoto}
       />
     </>
   );

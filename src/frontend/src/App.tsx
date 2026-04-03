@@ -245,11 +245,9 @@ export default function App() {
           // Skip if we're already in this call
           if (activeDmCallRef.current?.dmChannelId === channelId) continue;
 
-          // Check if current user is already a participant
-          const amParticipant = callState.participants.some(
-            (p) => p.toString() === myPrincipal,
-          );
-          if (amParticipant) continue;
+          // Skip only if we are the call initiator (not just any participant)
+          const amInitiator = callState.initiator.toString() === myPrincipal;
+          if (amInitiator) continue;
 
           // Check if already ringing
           const alreadyRinging = incomingRingsRef.current.some(
@@ -322,19 +320,31 @@ export default function App() {
       try {
         await actor.joinDMCall(dmChannelId);
 
-        // Figure out members for this channel
+        // Fetch the invited members list from the backend
+        // (startDMCall stores invitedMembers separately from participants)
         let members: Principal[] = [];
-        const directConv = conversations.find(
-          ([p]) => p.toString() === dmChannelId,
-        );
-        if (directConv) {
-          members = [
-            PrincipalClass.fromText(dmChannelId),
-            ...(myPrincipal ? [PrincipalClass.fromText(myPrincipal)] : []),
-          ];
-        } else {
-          const group = groupDMs.find((g) => g.id.toString() === dmChannelId);
-          if (group) members = group.members;
+        try {
+          // biome-ignore lint/suspicious/noExplicitAny: getDMInvitedMembers may not be in generated interface type
+          const invitedMembers = await (actor as any).getDMInvitedMembers(
+            dmChannelId,
+          );
+          if (invitedMembers.length > 0) {
+            members = invitedMembers;
+          }
+        } catch {
+          // fallback: reconstruct from conversation data
+          const directConv = conversations.find(
+            ([p]) => p.toString() === dmChannelId,
+          );
+          if (directConv) {
+            members = [
+              PrincipalClass.fromText(dmChannelId),
+              ...(myPrincipal ? [PrincipalClass.fromText(myPrincipal)] : []),
+            ];
+          } else {
+            const group = groupDMs.find((g) => g.id.toString() === dmChannelId);
+            if (group) members = group.members;
+          }
         }
 
         setActiveDmCall({ dmChannelId, members });
@@ -472,13 +482,11 @@ export default function App() {
   // Merged names for DM view (all registered users + server member names)
   const mergedDmNames = { ...enrichedNames, ...dmUserNames };
 
-  // Resolve group members for active group
-  const activeGroupData =
+  // Resolve group members for active group (kept for future use)
+  const _activeGroupData =
     activeGroupId !== null
       ? (groupDMs.find((g) => g.id === activeGroupId) ?? null)
       : null;
-  const groupCallMembers: Principal[] = activeGroupData?.members ?? [];
-
   const dmContent = activeDmCall ? (
     <DMCallScreen
       key={activeDmCall.dmChannelId}
@@ -521,9 +529,6 @@ export default function App() {
       onOpenSettings={() => {}}
     />
   );
-
-  // Suppress unused var for groupCallMembers
-  void groupCallMembers;
 
   return (
     <>

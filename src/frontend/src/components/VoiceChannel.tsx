@@ -117,7 +117,10 @@ export default function VoiceChannel({
   const [volumePopoverFor, setVolumePopoverFor] = useState<string | null>(null);
 
   const { settings } = useAudioSettings();
-  const { photoUrl } = useProfilePhoto(actor, myPrincipal);
+  const { photoUrl, savePhoto, clearPhoto } = useProfilePhoto(
+    actor,
+    myPrincipal,
+  );
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const [showSettings, setShowSettings] = useState(false);
@@ -938,6 +941,9 @@ export default function VoiceChannel({
         showBitrate={isOwner}
         myPrincipal={myPrincipal}
         myName={memberNames[myPrincipal || ""] || "?"}
+        photoUrl={photoUrl}
+        onSavePhoto={savePhoto}
+        onClearPhoto={clearPhoto}
       />
     </div>
   );

@@ -5,19 +5,38 @@ import type { backendInterface } from "../backend";
 const photoCache = new Map<string, string | null>();
 const pendingFetches = new Map<string, Promise<string | null>>();
 
+// Module-level version counter: incremented whenever a photo is saved or cleared.
+// Components subscribe to this via usePhotoVersion() to re-fetch when any photo changes.
+let photoVersion = 0;
+const photoVersionListeners = new Set<() => void>();
+
+function notifyPhotoVersionListeners() {
+  photoVersion += 1;
+  for (const listener of photoVersionListeners) {
+    listener();
+  }
+}
+
+export function usePhotoVersion(): number {
+  const [version, setVersion] = useState(photoVersion);
+  useEffect(() => {
+    const listener = () => setVersion((v) => v + 1);
+    photoVersionListeners.add(listener);
+    return () => {
+      photoVersionListeners.delete(listener);
+    };
+  }, []);
+  return version;
+}
+
 // Internal cast helper: the generated backend.ts backendInterface doesn't
 // always include saveProfilePhoto/getProfilePhoto (they may be added via
 // backend.d.ts augmentation). We cast to any internally to avoid import
 // cycles and TS mismatches while keeping external API typed.
 function asPhotoActor(actor: backendInterface) {
-  // biome-ignore lint/suspicious/noExplicitAny: backend methods not in generated interface
   return actor as any;
 }
 
-/**
- * Fetch a single user's profile photo from the ICP backend.
- * Results are cached module-level to avoid redundant backend calls.
- */
 export async function fetchProfilePhoto(
   actor: backendInterface,
   principalStr: string,
@@ -25,7 +44,6 @@ export async function fetchProfilePhoto(
   if (photoCache.has(principalStr)) {
     return photoCache.get(principalStr) ?? null;
   }
-  // Deduplicate concurrent fetches for the same principal
   if (pendingFetches.has(principalStr)) {
     return pendingFetches.get(principalStr)!;
   }
@@ -33,7 +51,7 @@ export async function fetchProfilePhoto(
   const promise = asPhotoActor(actor)
     .getProfilePhoto(Principal.fromText(principalStr))
     .then((photo: string | null | undefined) => {
-      const result = photo ?? null;
+      const result = photo && photo.length > 0 ? photo : null;
       photoCache.set(principalStr, result);
       pendingFetches.delete(principalStr);
       return result;
@@ -46,29 +64,29 @@ export async function fetchProfilePhoto(
   return promise;
 }
 
-/**
- * Invalidate the cache for a principal (call after saving a new photo).
- */
 export function invalidatePhotoCache(principalStr: string) {
   photoCache.delete(principalStr);
   pendingFetches.delete(principalStr);
+  // Notify all hook instances that a photo changed so they re-fetch
+  notifyPhotoVersionListeners();
 }
 
-/**
- * Hook: fetches and caches profile photos for a list of principals.
- * Returns a record mapping principal string -> data URL | null.
- */
 export function useProfilePhotos(
   principals: string[],
   actor: backendInterface | null,
 ): Record<string, string | null> {
   const [photos, setPhotos] = useState<Record<string, string | null>>({});
-  // Use a ref to track which principals we've already kicked off fetches for
+  // Track which principals we've fetched per actor instance
   const fetchedRef = useRef<Set<string>>(new Set());
+  // Subscribe to global photo version so we re-fetch when any photo changes
+  const version = usePhotoVersion();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional – principals.join() and version used as stable cache keys; principals.filter/length accessed inside
   useEffect(() => {
     if (!actor || principals.length === 0) return;
 
+    // On version bump, clear fetchedRef so we re-fetch everyone
+    // (a photo was saved/cleared somewhere)
     const toFetch = principals.filter((p) => !fetchedRef.current.has(p));
     if (toFetch.length === 0) return;
 
@@ -86,28 +104,35 @@ export function useProfilePhotos(
         return next;
       });
     });
-  }, [actor, principals]);
+  }, [actor, principals.join(","), version]);
+
+  // When version changes, clear fetchedRef so ALL principals get re-fetched
+  const prevVersionRef = useRef(version);
+  useEffect(() => {
+    if (version !== prevVersionRef.current) {
+      prevVersionRef.current = version;
+      // Bust the fetchedRef so all principals re-fetch
+      fetchedRef.current = new Set();
+    }
+  }, [version]);
 
   return photos;
 }
 
-/**
- * Hook for the current user's own profile photo.
- * Handles save (to backend + local state) and clear.
- */
 export function useProfilePhoto(
   actor?: backendInterface | null,
   myPrincipalStr?: string | null,
 ) {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  // Subscribe to global version so this hook also re-fetches when photos change
+  const version = usePhotoVersion();
+  const lastFetchedPrincipalRef = useRef<string | null>(null);
 
-  // Save photo to backend and update local state
   const savePhoto = async (dataUrl: string, principalStr?: string) => {
     setPhotoUrl(dataUrl);
     if (actor) {
       try {
         await asPhotoActor(actor).saveProfilePhoto(dataUrl);
-        // Invalidate cache so other components re-fetch
         const key = principalStr ?? myPrincipalStr;
         if (key) invalidatePhotoCache(key);
       } catch (e) {
@@ -116,7 +141,6 @@ export function useProfilePhoto(
     }
   };
 
-  // Clear photo — remove from backend by saving empty string
   const clearPhoto = async (principalStr?: string) => {
     setPhotoUrl(null);
     if (actor) {
@@ -130,13 +154,19 @@ export function useProfilePhoto(
     }
   };
 
-  // On mount (or when actor/principal become available), load own photo from backend
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional – version used to trigger re-fetch when photos change globally
   useEffect(() => {
     if (!actor || !myPrincipalStr) return;
+    // Re-fetch whenever version changes or principal changes
+    lastFetchedPrincipalRef.current = myPrincipalStr;
+    // Force re-fetch from backend (bypass cache) by deleting cache entry first
+    // only on version changes (someone saved a photo)
     fetchProfilePhoto(actor, myPrincipalStr).then((url) => {
-      if (url) setPhotoUrl(url);
+      if (lastFetchedPrincipalRef.current === myPrincipalStr) {
+        setPhotoUrl(url);
+      }
     });
-  }, [actor, myPrincipalStr]);
+  }, [actor, myPrincipalStr, version]);
 
   return { photoUrl, savePhoto, clearPhoto };
 }
